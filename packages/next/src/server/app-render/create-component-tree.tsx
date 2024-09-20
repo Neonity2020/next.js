@@ -90,6 +90,7 @@ async function createComponentTreeInternal({
       LayoutRouter,
       RenderFromTemplateContext,
       ClientPageRoot,
+      ClientSegmentRoot,
       createUntrackedSearchParams,
       createDynamicallyTrackedSearchParams,
       createDynamicallyTrackedParams,
@@ -592,15 +593,22 @@ async function createComponentTreeInternal({
           isStaticGeneration={isStaticGeneration}
           ready={getMetadataReady}
         >
-          {pageElement}
           {layerAssets}
+          {pageElement}
         </Segment>
       </React.Fragment>,
       parallelRouteCacheNodeSeedData,
       loadingData,
     ]
   } else {
-    props.params = createDynamicallyTrackedParams(currentParams)
+    let layoutElement: React.ReactNode
+    if (isClientComponent) {
+      props.params = currentParams
+      layoutElement = <ClientSegmentRoot props={props} Component={Component} />
+    } else {
+      props.params = createDynamicallyTrackedParams(currentParams)
+      layoutElement = <Component {...props} />
+    }
 
     // For layouts we just render the component
     return [
@@ -617,7 +625,7 @@ async function createComponentTreeInternal({
         ready={getMetadataReady}
       >
         {layerAssets}
-        <Component {...props} />
+        {layoutElement}
       </Segment>,
       parallelRouteCacheNodeSeedData,
       loadingData,
