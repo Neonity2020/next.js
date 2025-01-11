@@ -5,7 +5,6 @@ use turbopack_core::{
     chunk::{AsyncModuleInfo, ChunkItem, ChunkType, ChunkingContext},
     ident::AssetIdent,
     module::Module,
-    reference::ModuleReferences,
 };
 
 use super::{asset::EcmascriptModulePartAsset, part_of_module, split_module};
@@ -82,11 +81,6 @@ impl EcmascriptChunkItem for EcmascriptModulePartChunkItem {
 #[turbo_tasks::value_impl]
 impl ChunkItem for EcmascriptModulePartChunkItem {
     #[turbo_tasks::function]
-    fn references(&self) -> Vc<ModuleReferences> {
-        self.module.references()
-    }
-
-    #[turbo_tasks::function]
     fn asset_ident(&self) -> Vc<AssetIdent> {
         self.module.ident()
     }
@@ -107,11 +101,6 @@ impl ChunkItem for EcmascriptModulePartChunkItem {
     fn module(&self) -> Vc<Box<dyn Module>> {
         *ResolvedVc::upcast(self.module)
     }
-
-    #[turbo_tasks::function]
-    fn is_self_async(&self) -> Vc<bool> {
-        self.module.is_async_module()
-    }
 }
 
 #[turbo_tasks::value(shared)]
@@ -122,11 +111,6 @@ pub(super) struct SideEffectsModuleChunkItem {
 
 #[turbo_tasks::value_impl]
 impl ChunkItem for SideEffectsModuleChunkItem {
-    #[turbo_tasks::function]
-    fn references(&self) -> Vc<ModuleReferences> {
-        self.module.references()
-    }
-
     #[turbo_tasks::function]
     fn asset_ident(&self) -> Vc<AssetIdent> {
         self.module.ident()

@@ -4,7 +4,6 @@ use turbopack_core::{
     chunk::{AsyncModuleInfo, ChunkItem, ChunkType, ChunkingContext},
     ident::AssetIdent,
     module::Module,
-    reference::ModuleReferences,
 };
 
 use super::module::EcmascriptModuleLocalsModule;
@@ -78,11 +77,6 @@ impl EcmascriptChunkItem for EcmascriptModuleLocalsChunkItem {
 #[turbo_tasks::value_impl]
 impl ChunkItem for EcmascriptModuleLocalsChunkItem {
     #[turbo_tasks::function]
-    fn references(&self) -> Vc<ModuleReferences> {
-        self.module.references()
-    }
-
-    #[turbo_tasks::function]
     fn asset_ident(&self) -> Vc<AssetIdent> {
         self.module.ident()
     }
@@ -102,17 +96,5 @@ impl ChunkItem for EcmascriptModuleLocalsChunkItem {
     #[turbo_tasks::function]
     fn module(&self) -> Vc<Box<dyn Module>> {
         *ResolvedVc::upcast(self.module)
-    }
-
-    #[turbo_tasks::function]
-    async fn is_self_async(&self) -> Result<Vc<bool>> {
-        let module = self.module.await?;
-        let analyze = module.module.analyze().await?;
-        if let Some(async_module) = *analyze.async_module.await? {
-            let is_self_async = async_module.is_self_async(*analyze.local_references);
-            Ok(is_self_async)
-        } else {
-            Ok(Vc::cell(false))
-        }
     }
 }

@@ -196,7 +196,12 @@ export type GetDynamicParamFromSegment = (
 
 export type GenerateFlight = typeof generateDynamicFlightRenderResult
 
+export type AppSharedContext = {
+  buildId: string
+}
+
 export type AppRenderContext = {
+  sharedContext: AppSharedContext
   workStore: WorkStore
   url: ReturnType<typeof parseRelativeUrl>
   componentMod: AppPageModule
@@ -223,7 +228,8 @@ interface ParseRequestHeadersOptions {
   readonly isRoutePPREnabled: boolean
 }
 
-const flightDataPathHeadKey = 'h'
+const flightDataPathMetadataKey = 'h'
+const flightDataPathViewportKey = 'v'
 
 interface ParsedRequestHeaders {
   /**
@@ -306,6 +312,20 @@ function createNotFoundLoaderTree(loaderTree: LoaderTree): LoaderTree {
     },
     components,
   ]
+}
+
+function createSuspenseyMetadata(
+  Metadata: React.ComponentType<{}>,
+  serveStreamingMetadata: boolean
+): React.ComponentType<{}> {
+  return () =>
+    serveStreamingMetadata ? (
+      <React.Suspense fallback={null}>
+        <Metadata />
+      </React.Suspense>
+    ) : (
+      <Metadata />
+    )
 }
 
 /**
@@ -445,21 +465,33 @@ async function generateDynamicRSCPayload(
     const preloadCallbacks: PreloadCallbacks = []
 
     const searchParams = createServerSearchParamsForMetadata(query, workStore)
-    const [MetadataTree, getMetadataReady] = createMetadataComponents({
-      tree: loaderTree,
-      searchParams,
-      metadataContext: createTrackedMetadataContext(
-        url.pathname,
-        ctx.renderOpts,
-        workStore
-      ),
-      getDynamicParamFromSegment,
-      appUsingSizeAdjustment,
-      createServerParamsForMetadata,
-      workStore,
-      MetadataBoundary,
-      ViewportBoundary,
-    })
+    const { ViewportTree, MetadataTree, getViewportReady, getMetadataReady } =
+      createMetadataComponents({
+        tree: loaderTree,
+        searchParams,
+        metadataContext: createTrackedMetadataContext(
+          url.pathname,
+          ctx.renderOpts,
+          workStore
+        ),
+        getDynamicParamFromSegment,
+        appUsingSizeAdjustment,
+        createServerParamsForMetadata,
+        workStore,
+        MetadataBoundary,
+        ViewportBoundary,
+        serveStreamingMetadata: !!ctx.renderOpts.serveStreamingMetadata,
+      })
+
+    const MetadataComponent = createSuspenseyMetadata(() => {
+      return (
+        <React.Fragment key={flightDataPathMetadataKey}>
+          {/* Adding requestId as react key to make metadata remount for each render */}
+          <MetadataTree key={requestId} />
+        </React.Fragment>
+      )
+    }, !!ctx.renderOpts.serveStreamingMetadata)
+
     flightData = (
       await walkTreeWithFlightRouterState({
         ctx,
@@ -467,19 +499,22 @@ async function generateDynamicRSCPayload(
         parentParams: {},
         flightRouterState,
         // For flight, render metadata inside leaf page
-        rscPayloadHead: (
-          <React.Fragment key={flightDataPathHeadKey}>
+        rscHead: (
+          <React.Fragment key={flightDataPathViewportKey}>
+            {/* noindex needs to be blocking */}
             <NonIndex ctx={ctx} />
             {/* Adding requestId as react key to make metadata remount for each render */}
-            <MetadataTree key={requestId} />
+            <ViewportTree key={requestId} />
           </React.Fragment>
         ),
         injectedCSS: new Set(),
         injectedJS: new Set(),
         injectedFontPreloadTags: new Set(),
         rootLayoutIncluded: false,
+        getViewportReady,
         getMetadataReady,
         preloadCallbacks,
+        MetadataComponent,
       })
     ).map((path) => path.slice(1)) // remove the '' (root) segment
   }
@@ -491,13 +526,13 @@ async function generateDynamicRSCPayload(
     return {
       a: options.actionResult,
       f: flightData,
-      b: ctx.renderOpts.buildId,
+      b: ctx.sharedContext.buildId,
     }
   }
 
   // Otherwise, it's a regular RSC response.
   return {
-    b: ctx.renderOpts.buildId,
+    b: ctx.sharedContext.buildId,
     f: flightData,
     S: workStore.isStaticGeneration,
   }
@@ -733,24 +768,35 @@ async function getRSCPayload(
   )
 
   const searchParams = createServerSearchParamsForMetadata(query, workStore)
-  const [MetadataTree, getMetadataReady] = createMetadataComponents({
-    tree,
-    errorType: is404 ? 'not-found' : undefined,
-    searchParams,
-    metadataContext: createTrackedMetadataContext(
-      url.pathname,
-      ctx.renderOpts,
-      workStore
-    ),
-    getDynamicParamFromSegment,
-    appUsingSizeAdjustment,
-    createServerParamsForMetadata,
-    workStore,
-    MetadataBoundary,
-    ViewportBoundary,
-  })
+  const { ViewportTree, MetadataTree, getViewportReady, getMetadataReady } =
+    createMetadataComponents({
+      tree,
+      errorType: is404 ? 'not-found' : undefined,
+      searchParams,
+      metadataContext: createTrackedMetadataContext(
+        url.pathname,
+        ctx.renderOpts,
+        workStore
+      ),
+      getDynamicParamFromSegment,
+      appUsingSizeAdjustment,
+      createServerParamsForMetadata,
+      workStore,
+      MetadataBoundary,
+      ViewportBoundary,
+      serveStreamingMetadata: !!ctx.renderOpts.serveStreamingMetadata,
+    })
 
   const preloadCallbacks: PreloadCallbacks = []
+
+  const MetadataComponent = createSuspenseyMetadata(() => {
+    return (
+      <React.Fragment key={flightDataPathMetadataKey}>
+        {/* Not add requestId as react key to ensure segment prefetch could result consistently if nothing changed */}
+        <MetadataTree />
+      </React.Fragment>
+    )
+  }, !!ctx.renderOpts.serveStreamingMetadata)
 
   const seedData = await createComponentTree({
     ctx,
@@ -760,10 +806,12 @@ async function getRSCPayload(
     injectedJS,
     injectedFontPreloadTags,
     rootLayoutIncluded: false,
+    getViewportReady,
     getMetadataReady,
     missingSlots,
     preloadCallbacks,
     authInterrupts: ctx.renderOpts.experimental.authInterrupts,
+    MetadataComponent,
   })
 
   // When the `vary` response header is present with `Next-URL`, that means there's a chance
@@ -773,11 +821,10 @@ async function getRSCPayload(
   const couldBeIntercepted =
     typeof varyHeader === 'string' && varyHeader.includes(NEXT_URL)
 
-  const initialHead = (
-    <React.Fragment key={flightDataPathHeadKey}>
+  const initialHeadViewport = (
+    <React.Fragment key={flightDataPathViewportKey}>
       <NonIndex ctx={ctx} />
-      {/* Adding requestId as react key to make metadata remount for each render */}
-      <MetadataTree key={ctx.requestId} />
+      <ViewportTree key={ctx.requestId} />
     </React.Fragment>
   )
 
@@ -796,7 +843,7 @@ async function getRSCPayload(
   return {
     // See the comment above the `Preloads` component (below) for why this is part of the payload
     P: <Preloads preloadCallbacks={preloadCallbacks} />,
-    b: ctx.renderOpts.buildId,
+    b: ctx.sharedContext.buildId,
     p: ctx.assetPrefix,
     c: prepareInitialCanonicalUrl(url),
     i: !!couldBeIntercepted,
@@ -804,7 +851,7 @@ async function getRSCPayload(
       [
         initialTree,
         seedData,
-        initialHead,
+        [initialHeadViewport, null],
         isPossiblyPartialHead,
       ] as FlightDataPath,
     ],
@@ -850,7 +897,7 @@ async function getErrorRSCPayload(
   } = ctx
 
   const searchParams = createServerSearchParamsForMetadata(query, workStore)
-  const [MetadataTree] = createMetadataComponents({
+  const { MetadataTree, ViewportTree } = createMetadataComponents({
     tree,
     searchParams,
     // We create an untracked metadata context here because we can't postpone
@@ -863,13 +910,24 @@ async function getErrorRSCPayload(
     workStore,
     MetadataBoundary,
     ViewportBoundary,
+    serveStreamingMetadata: !!ctx.renderOpts.serveStreamingMetadata,
   })
 
-  const initialHead = (
-    <React.Fragment key={flightDataPathHeadKey}>
+  const ErrorMetadataComponent = createSuspenseyMetadata(
+    () => (
+      <React.Fragment key={flightDataPathMetadataKey}>
+        {/* Adding requestId as react key to make metadata remount for each render */}
+        <MetadataTree key={requestId} />
+      </React.Fragment>
+    ),
+    !!ctx.renderOpts.serveStreamingMetadata
+  )
+
+  const initialHeadViewport = (
+    <React.Fragment key={flightDataPathViewportKey}>
       <NonIndex ctx={ctx} />
       {/* Adding requestId as react key to make metadata remount for each render */}
-      <MetadataTree key={requestId} />
+      <ViewportTree key={requestId} />
       {process.env.NODE_ENV === 'development' && (
         <meta name="next-error" content="not-found" />
       )}
@@ -884,11 +942,13 @@ async function getErrorRSCPayload(
 
   // For metadata notFound error there's no global not found boundary on top
   // so we create a not found page with AppRouter
-  const initialSeedData: CacheNodeSeedData = [
+  const seedData: CacheNodeSeedData = [
     initialTree[0],
     <html id="__next_error__">
-      <head></head>
-      <body></body>
+      <head>
+        <ErrorMetadataComponent />
+      </head>
+      <body />
     </html>,
     {},
     null,
@@ -902,7 +962,7 @@ async function getErrorRSCPayload(
     ctx.renderOpts.experimental.isRoutePPREnabled === true
 
   return {
-    b: ctx.renderOpts.buildId,
+    b: ctx.sharedContext.buildId,
     p: ctx.assetPrefix,
     c: prepareInitialCanonicalUrl(url),
     m: undefined,
@@ -910,8 +970,8 @@ async function getErrorRSCPayload(
     f: [
       [
         initialTree,
-        initialSeedData,
-        initialHead,
+        seedData,
+        [initialHeadViewport, null],
         isPossiblyPartialHead,
       ] as FlightDataPath,
     ],
@@ -1044,7 +1104,8 @@ async function renderToHTMLOrFlightImpl(
   requestEndedState: { ended?: boolean },
   postponedState: PostponedState | null,
   implicitTags: Array<string>,
-  serverComponentsHmrCache: ServerComponentsHmrCache | undefined
+  serverComponentsHmrCache: ServerComponentsHmrCache | undefined,
+  sharedContext: AppSharedContext
 ) {
   const isNotFoundPath = pagePath === '/404'
   if (isNotFoundPath) {
@@ -1211,6 +1272,7 @@ async function renderToHTMLOrFlightImpl(
     isNotFoundPath,
     nonce,
     res,
+    sharedContext,
   }
 
   getTracer().setRootSpanAttribute('next.route', pagePath)
@@ -1276,13 +1338,23 @@ async function renderToHTMLOrFlightImpl(
       workStore.pendingRevalidateWrites ||
       workStore.revalidatedTags
     ) {
-      options.waitUntil = Promise.all([
+      const pendingPromise = Promise.all([
         workStore.incrementalCache?.revalidateTag(
           workStore.revalidatedTags || []
         ),
         ...Object.values(workStore.pendingRevalidates || {}),
         ...(workStore.pendingRevalidateWrites || []),
-      ])
+      ]).finally(() => {
+        if (process.env.NEXT_PRIVATE_DEBUG_CACHE) {
+          console.log('pending revalidates promise finished for:', url)
+        }
+      })
+
+      if (renderOpts.waitUntil) {
+        renderOpts.waitUntil(pendingPromise)
+      } else {
+        options.waitUntil = pendingPromise
+      }
     }
 
     if (response.collectedTags) {
@@ -1433,13 +1505,23 @@ async function renderToHTMLOrFlightImpl(
       workStore.pendingRevalidateWrites ||
       workStore.revalidatedTags
     ) {
-      options.waitUntil = Promise.all([
+      const pendingPromise = Promise.all([
         workStore.incrementalCache?.revalidateTag(
           workStore.revalidatedTags || []
         ),
         ...Object.values(workStore.pendingRevalidates || {}),
         ...(workStore.pendingRevalidateWrites || []),
-      ])
+      ]).finally(() => {
+        if (process.env.NEXT_PRIVATE_DEBUG_CACHE) {
+          console.log('pending revalidates promise finished for:', url)
+        }
+      })
+
+      if (renderOpts.waitUntil) {
+        renderOpts.waitUntil(pendingPromise)
+      } else {
+        options.waitUntil = pendingPromise
+      }
     }
 
     // Create the new render result for the response.
@@ -1455,7 +1537,8 @@ export type AppPageRender = (
   fallbackRouteParams: FallbackRouteParams | null,
   renderOpts: RenderOpts,
   serverComponentsHmrCache: ServerComponentsHmrCache | undefined,
-  isDevWarmup: boolean
+  isDevWarmup: boolean,
+  sharedContext: AppSharedContext
 ) => Promise<RenderResult<AppPageRenderResultMetadata>>
 
 export const renderToHTMLOrFlight: AppPageRender = (
@@ -1466,7 +1549,8 @@ export const renderToHTMLOrFlight: AppPageRender = (
   fallbackRouteParams,
   renderOpts,
   serverComponentsHmrCache,
-  isDevWarmup
+  isDevWarmup,
+  sharedContext
 ) => {
   if (!req.url) {
     throw new Error('Invalid URL')
@@ -1523,6 +1607,7 @@ export const renderToHTMLOrFlight: AppPageRender = (
     requestEndedState,
     // @TODO move to workUnitStore of type Request
     isPrefetchRequest,
+    buildId: sharedContext.buildId,
   })
 
   return workAsyncStorage.run(
@@ -1541,7 +1626,8 @@ export const renderToHTMLOrFlight: AppPageRender = (
     requestEndedState,
     postponedState,
     implicitTags,
-    serverComponentsHmrCache
+    serverComponentsHmrCache,
+    sharedContext
   )
 }
 
@@ -2731,12 +2817,6 @@ async function prerenderToStream(
                   clientReferenceManifest.clientModules,
                   {
                     onError: (err: unknown) => {
-                      // TODO we can remove this once https://github.com/facebook/react/pull/31715 lands
-                      // because we won't have onError calls when halting the prerender
-                      if (finalServerController.signal.aborted) {
-                        return
-                      }
-
                       return serverComponentsErrorHandler(err)
                     },
                     signal: finalServerController.signal,
@@ -3774,7 +3854,7 @@ async function prerenderToStream(
       revalidate: INFINITE_CACHE,
       expire: INFINITE_CACHE,
       stale: INFINITE_CACHE,
-      tags: [...implicitTags],
+      tags: [...(prerenderStore?.tags || implicitTags)],
     })
     const errorRSCPayload = await workUnitAsyncStorage.run(
       prerenderLegacyStore,
@@ -3979,10 +4059,7 @@ async function collectSegmentData(
   // decomposed into a separate stream per segment.
 
   const clientReferenceManifest = renderOpts.clientReferenceManifest
-  if (
-    !clientReferenceManifest ||
-    renderOpts.experimental.isRoutePPREnabled !== true
-  ) {
+  if (!clientReferenceManifest || !renderOpts.experimental.clientSegmentCache) {
     return
   }
 
@@ -4000,8 +4077,27 @@ async function collectSegmentData(
     serverModuleMap: null,
   }
 
+  // When dynamicIO is enabled, missing data is encoded to an infinitely hanging
+  // promise, the absence of which we use to determine if a segment is fully
+  // static or partially static. However, when dynamicIO is not enabled, this
+  // trick doesn't work.
+  //
+  // So if PPR is enabled, and dynamicIO is not, we have to be conservative and
+  // assume all segments are partial.
+  //
+  // TODO: When PPR is on, we can at least optimize the case where the entire
+  // page is static. Either by passing that as an argument to this function, or
+  // by setting a header on the response like the we do for full page RSC
+  // prefetches today. The latter approach might be simpler since it requires
+  // less plumbing, and the client has to check the header regardless to see if
+  // PPR is enabled.
+  const shouldAssumePartialData =
+    renderOpts.experimental.isRoutePPREnabled === true && // PPR is enabled
+    !renderOpts.experimental.dynamicIO // dynamicIO is disabled
+
   const staleTime = prerenderStore.stale
   return await ComponentMod.collectSegmentData(
+    shouldAssumePartialData,
     fullPageDataBuffer,
     staleTime,
     clientReferenceManifest.clientModules as ManifestNode,

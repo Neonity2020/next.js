@@ -228,6 +228,7 @@ pub async fn get_client_module_options_context(
     ty: Value<ClientContextType>,
     mode: Vc<NextMode>,
     next_config: Vc<NextConfig>,
+    encryption_key: ResolvedVc<RcStr>,
 ) -> Result<Vc<ModuleOptionsContext>> {
     let next_mode = mode.await?;
     let resolve_options_context = get_client_resolve_options_context(
@@ -283,9 +284,11 @@ pub async fn get_client_module_options_context(
     let target_browsers = env.runtime_versions();
 
     let mut next_client_rules =
-        get_next_client_transforms_rules(next_config, ty.into_value(), mode, false).await?;
+        get_next_client_transforms_rules(next_config, ty.into_value(), mode, false, encryption_key)
+            .await?;
     let foreign_next_client_rules =
-        get_next_client_transforms_rules(next_config, ty.into_value(), mode, true).await?;
+        get_next_client_transforms_rules(next_config, ty.into_value(), mode, true, encryption_key)
+            .await?;
     let additional_rules: Vec<ModuleRule> = vec![
         get_swc_ecma_transform_plugin_rule(next_config, project_path).await?,
         get_relay_transform_rule(next_config, project_path).await?,
@@ -398,8 +401,9 @@ pub async fn get_client_module_options_context(
 
 #[turbo_tasks::function]
 pub async fn get_client_chunking_context(
-    project_path: ResolvedVc<FileSystemPath>,
+    root_path: ResolvedVc<FileSystemPath>,
     client_root: ResolvedVc<FileSystemPath>,
+    client_root_to_root_path: ResolvedVc<RcStr>,
     asset_prefix: ResolvedVc<Option<RcStr>>,
     environment: ResolvedVc<Environment>,
     mode: Vc<NextMode>,
@@ -408,8 +412,9 @@ pub async fn get_client_chunking_context(
 ) -> Result<Vc<Box<dyn ChunkingContext>>> {
     let next_mode = mode.await?;
     let mut builder = BrowserChunkingContext::builder(
-        project_path,
+        root_path,
         client_root,
+        client_root_to_root_path,
         client_root,
         client_root
             .join("static/chunks".into())

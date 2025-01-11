@@ -92,9 +92,11 @@ impl ChunkableModule for NextServerUtilityModule {
 impl EcmascriptChunkPlaceable for NextServerUtilityModule {
     #[turbo_tasks::function]
     async fn get_exports(&self) -> Result<Vc<EcmascriptExports>> {
-        let module_reference = Vc::upcast(NextServerUtilityModuleReference::new(Vc::upcast(
-            *self.module,
-        )));
+        let module_reference = ResolvedVc::upcast(
+            NextServerUtilityModuleReference::new(Vc::upcast(*self.module))
+                .to_resolved()
+                .await?,
+        );
 
         let mut exports = BTreeMap::new();
         exports.insert(
@@ -105,7 +107,7 @@ impl EcmascriptChunkPlaceable for NextServerUtilityModule {
         Ok(EcmascriptExports::EsmExports(
             EsmExports {
                 exports,
-                star_exports: vec![module_reference.to_resolved().await?],
+                star_exports: vec![module_reference],
             }
             .resolved_cell(),
         )
@@ -154,11 +156,6 @@ impl ChunkItem for NextServerComponentChunkItem {
     #[turbo_tasks::function]
     fn asset_ident(&self) -> Vc<AssetIdent> {
         self.inner.ident()
-    }
-
-    #[turbo_tasks::function]
-    fn references(&self) -> Vc<ModuleReferences> {
-        self.inner.references()
     }
 
     #[turbo_tasks::function]

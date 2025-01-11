@@ -92,6 +92,7 @@ pub async fn children_from_module_references(
             }
         }
 
+        let key = key.to_resolved().await?;
         for &module in reference
             .resolve_reference()
             .resolve()
@@ -100,7 +101,7 @@ pub async fn children_from_module_references(
             .await?
             .iter()
         {
-            children.insert((key.to_resolved().await?, IntrospectableModule::new(*module)));
+            children.insert((key, IntrospectableModule::new(*module).to_resolved().await?));
         }
         for &output_asset in reference
             .resolve_reference()
@@ -109,8 +110,10 @@ pub async fn children_from_module_references(
             .iter()
         {
             children.insert((
-                key.to_resolved().await?,
-                IntrospectableOutputAsset::new(*output_asset),
+                key,
+                IntrospectableOutputAsset::new(*output_asset)
+                    .to_resolved()
+                    .await?,
             ));
         }
     }
@@ -121,13 +124,15 @@ pub async fn children_from_module_references(
 pub async fn children_from_output_assets(
     references: Vc<OutputAssets>,
 ) -> Result<Vc<IntrospectableChildren>> {
-    let key = reference_ty();
+    let key = reference_ty().to_resolved().await?;
     let mut children = FxIndexSet::default();
     let references = references.await?;
     for &reference in &*references {
         children.insert((
-            key.to_resolved().await?,
-            IntrospectableOutputAsset::new(*ResolvedVc::upcast(reference)),
+            key,
+            IntrospectableOutputAsset::new(*ResolvedVc::upcast(reference))
+                .to_resolved()
+                .await?,
         ));
     }
     Ok(Vc::cell(children))

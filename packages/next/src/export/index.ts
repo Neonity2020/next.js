@@ -317,7 +317,6 @@ async function exportAppImpl(
   // Start the rendering process
   const renderOpts: WorkerRenderOptsPartial = {
     previewProps: prerenderManifest?.preview,
-    buildId,
     nextExport: true,
     assetPrefix: nextConfig.assetPrefix.replace(/\/$/, ''),
     distDir,
@@ -357,8 +356,11 @@ async function exportAppImpl(
       clientTraceMetadata: nextConfig.experimental.clientTraceMetadata,
       expireTime: nextConfig.expireTime,
       dynamicIO: nextConfig.experimental.dynamicIO ?? false,
+      clientSegmentCache: nextConfig.experimental.clientSegmentCache ?? false,
       inlineCss: nextConfig.experimental.inlineCss ?? false,
       authInterrupts: !!nextConfig.experimental.authInterrupts,
+      streamingMetadata: !!nextConfig.experimental.streamingMetadata,
+      htmlLimitedBots: nextConfig.experimental.htmlLimitedBots,
     },
     reactMaxHeadersLength: nextConfig.reactMaxHeadersLength,
   }
@@ -542,6 +544,7 @@ async function exportAppImpl(
     await Promise.all(
       chunks.map((paths) =>
         worker.exportPages({
+          buildId,
           paths,
           exportPathMap,
           parentSpanId: span.getId(),

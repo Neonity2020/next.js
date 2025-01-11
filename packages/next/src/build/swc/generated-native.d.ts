@@ -268,6 +268,7 @@ export declare function projectUpdateInfoSubscribe(
 export interface StackFrame {
   isServer: boolean
   isInternal?: boolean
+  originalFile?: string
   file: string
   line?: number
   column?: number
@@ -275,7 +276,8 @@ export interface StackFrame {
 }
 export declare function projectTraceSource(
   project: { __napiType: 'Project' },
-  frame: StackFrame
+  frame: StackFrame,
+  currentDirectoryFileUrl: string
 ): Promise<StackFrame | null>
 export declare function projectGetSourceForAsset(
   project: { __napiType: 'Project' },

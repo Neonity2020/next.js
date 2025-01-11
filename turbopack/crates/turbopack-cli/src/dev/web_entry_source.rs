@@ -16,7 +16,7 @@ use turbopack_core::{
     },
 };
 use turbopack_dev_server::{
-    html::DevHtmlAsset,
+    html::{DevHtmlAsset, DevHtmlEntry},
     source::{asset_graph::AssetGraphContentSource, ContentSource},
 };
 use turbopack_ecmascript_runtime::RuntimeType;
@@ -32,14 +32,16 @@ use crate::{
 
 #[turbo_tasks::function]
 pub async fn get_client_chunking_context(
-    project_path: ResolvedVc<FileSystemPath>,
+    root_path: ResolvedVc<FileSystemPath>,
     server_root: ResolvedVc<FileSystemPath>,
+    server_root_to_root_path: ResolvedVc<RcStr>,
     environment: ResolvedVc<Environment>,
 ) -> Result<Vc<Box<dyn ChunkingContext>>> {
     Ok(Vc::upcast(
         BrowserChunkingContext::builder(
-            project_path,
+            root_path,
             server_root,
+            server_root_to_root_path,
             server_root,
             server_root.join("/_chunks".into()).to_resolved().await?,
             server_root.join("/_assets".into()).to_resolved().await?,
@@ -92,10 +94,11 @@ pub async fn get_client_runtime_entries(
 
 #[turbo_tasks::function]
 pub async fn create_web_entry_source(
-    project_path: Vc<FileSystemPath>,
+    root_path: Vc<FileSystemPath>,
     execution_context: Vc<ExecutionContext>,
     entry_requests: Vec<Vc<Request>>,
     server_root: Vc<FileSystemPath>,
+    server_root_to_root_path: ResolvedVc<RcStr>,
     _env: Vc<Box<dyn ProcessEnv>>,
     eager_compile: bool,
     node_env: Vc<NodeEnv>,
@@ -103,14 +106,20 @@ pub async fn create_web_entry_source(
 ) -> Result<Vc<Box<dyn ContentSource>>> {
     let compile_time_info = get_client_compile_time_info(browserslist_query, node_env);
     let asset_context =
-        get_client_asset_context(project_path, execution_context, compile_time_info, node_env);
-    let chunking_context =
-        get_client_chunking_context(project_path, server_root, compile_time_info.environment());
-    let entries = get_client_runtime_entries(project_path, node_env);
+        get_client_asset_context(root_path, execution_context, compile_time_info, node_env);
+    let chunking_context = get_client_chunking_context(
+        root_path,
+        server_root,
+        *server_root_to_root_path,
+        compile_time_info.environment(),
+    )
+    .to_resolved()
+    .await?;
+    let entries = get_client_runtime_entries(root_path, node_env);
 
     let runtime_entries = entries.resolve_entries(asset_context);
 
-    let origin = PlainResolveOrigin::new(asset_context, project_path.join("_".into()));
+    let origin = PlainResolveOrigin::new(asset_context, root_path.join("_".into()));
     let entries = entry_requests
         .into_iter()
         .map(|request| async move {
@@ -131,21 +140,25 @@ pub async fn create_web_entry_source(
         .into_iter()
         .flatten()
         .map(|module| async move {
-            if let (Some(chnkable), Some(entry)) = (
+            if let (Some(chunkable_module), Some(entry)) = (
                 ResolvedVc::try_sidecast::<Box<dyn ChunkableModule>>(module).await?,
                 ResolvedVc::try_sidecast::<Box<dyn EvaluatableAsset>>(module).await?,
             ) {
-                Ok((
-                    chnkable,
+                Ok(DevHtmlEntry {
+                    chunkable_module,
                     chunking_context,
-                    Some(runtime_entries.with_entry(*entry)),
-                ))
-            } else if let Some(chunkable) =
+                    runtime_entries: Some(runtime_entries.with_entry(*entry).to_resolved().await?),
+                })
+            } else if let Some(chunkable_module) =
                 ResolvedVc::try_sidecast::<Box<dyn ChunkableModule>>(module).await?
             {
                 // TODO this is missing runtime code, so it's probably broken and we should also
                 // add an ecmascript chunk with the runtime code
-                Ok((chunkable, chunking_context, None))
+                Ok(DevHtmlEntry {
+                    chunkable_module,
+                    chunking_context,
+                    runtime_entries: None,
+                })
             } else {
                 // TODO convert into a serve-able asset
                 Err(anyhow!(

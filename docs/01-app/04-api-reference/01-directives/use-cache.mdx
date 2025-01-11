@@ -19,7 +19,7 @@ The `use cache` directive designates a component and/or a function to be cached.
 
 Enable support for the `use cache` directive with the [`dynamicIO`](/docs/app/api-reference/config/next-config-js/dynamicIO) flag in your `next.config.ts` file:
 
-```ts filename="next.config.ts"
+```ts filename="next.config.ts" switcher
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
@@ -29,6 +29,17 @@ const nextConfig: NextConfig = {
 }
 
 export default nextConfig
+```
+
+```js filename="next.config.js" switcher
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    dynamicIO: true,
+  },
+}
+
+module.exports = nextConfig
 ```
 
 Then, you can use the `use cache` directive at the file, component, or function level:
@@ -137,7 +148,7 @@ You can use `use cache` at the component level to cache any fetches or computati
 
 The props are serialized and form part of the cache key, and the cache entry will be reused as long as the serialized props produce the same value in each instance.
 
-```tsx filename="app/components/bookings.tsx" highlight={2}
+```tsx filename="app/components/bookings.tsx" highlight={2} switcher
 export async function Bookings({ type = 'haircut' }: BookingsProps) {
   'use cache'
   async function getBookingsData() {
@@ -152,7 +163,7 @@ interface BookingsProps {
 }
 ```
 
-```jsx filename="app/components/bookings.js" highlight={2}
+```jsx filename="app/components/bookings.js" highlight={2} switcher
 export async function Bookings({ type = 'haircut' }) {
   'use cache'
   async function getBookingsData() {
@@ -212,6 +223,28 @@ export default async function Page() {
   )
 }
 
+async function CacheComponent({ children }: { children: ReactNode }) {
+  'use cache'
+  const cachedData = await fetch('/api/cached-data')
+  return (
+    <div>
+      <PrerenderedComponent data={cachedData} />
+      {children}
+    </div>
+  )
+}
+```
+
+```jsx filename="app/page.js" switcher
+export default async function Page() {
+  const uncachedData = await getData()
+  return (
+    <CacheComponent>
+      <DynamicComponent data={uncachedData} />
+    </CacheComponent>
+  )
+}
+
 async function CacheComponent({ children }) {
   'use cache'
   const cachedData = await fetch('/api/cached-data')
@@ -227,49 +260,57 @@ async function CacheComponent({ children }) {
 You can also pass Server Actions through cached components to Client Components without invoking them inside the cacheable function.
 
 ```tsx filename="app/page.tsx" switcher
-import ClientComponent from './ClientComponent';
+import ClientComponent from './ClientComponent'
 
 export default async function Page() {
   const performUpdate = async () => {
-    "use server"
+    'use server'
     // Perform some server-side update
-    await db.update(...);
-  };
+    await db.update(...)
+  }
 
-  return <CacheComponent performUpdate={performUpdate} />;
+  return <CacheComponent performUpdate={performUpdate} />
 }
 
-async function CachedComponent({ performUpdate }) {
-  "use cache"
+async function CachedComponent({
+  performUpdate,
+}: {
+  performUpdate: () => Promise<void>
+}) {
+  'use cache'
   // Do not call performUpdate here
-  return <ClientComponent action={performUpdate} />;
+  return <ClientComponent action={performUpdate} />
 }
 ```
 
 ```jsx filename="app/page.js" switcher
-import ClientComponent from './ClientComponent';
+import ClientComponent from './ClientComponent'
 
 export default async function Page() {
   const performUpdate = async () => {
-    "use server"
+    'use server'
     // Perform some server-side update
-    await db.update(...);
-  };
+    await db.update(...)
+  }
 
-  return <CacheComponent performUpdate={performUpdate} />;
+  return <CacheComponent performUpdate={performUpdate} />
 }
 
 async function CachedComponent({ performUpdate }) {
-  "use cache"
+  'use cache'
   // Do not call performUpdate here
-  return <ClientComponent action={performUpdate} />;
+  return <ClientComponent action={performUpdate} />
 }
 ```
 
 ```tsx filename="app/ClientComponent.tsx" switcher
 'use client'
 
-export default function ClientComponent({ action }) {
+export default function ClientComponent({
+  action,
+}: {
+  action: () => Promise<void>
+}) {
   return <button onClick={action}>Update</button>
 }
 ```
