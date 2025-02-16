@@ -5,7 +5,7 @@ use indoc::writedoc;
 use serde::Serialize;
 use turbo_rcstr::RcStr;
 use turbo_tasks::{ReadRef, ResolvedVc, TryJoinIterExt, Value, ValueToString, Vc};
-use turbo_tasks_fs::File;
+use turbo_tasks_fs::{File, FileSystemPath};
 use turbopack_core::{
     asset::{Asset, AssetContent},
     chunk::{
@@ -17,7 +17,7 @@ use turbopack_core::{
     module::Module,
     module_graph::ModuleGraph,
     output::{OutputAsset, OutputAssets},
-    source_map::{GenerateSourceMap, OptionSourceMap, SourceMapAsset},
+    source_map::{GenerateSourceMap, OptionStringifiedSourceMap, SourceMapAsset},
 };
 use turbopack_ecmascript::{
     chunk::{EcmascriptChunkData, EcmascriptChunkPlaceable},
@@ -79,7 +79,7 @@ impl EcmascriptDevEvaluateChunk {
         let source_maps = this
             .chunking_context
             .reference_chunk_source_maps(Vc::upcast(self));
-        let chunk_path_vc = self.ident().path();
+        let chunk_path_vc = self.path();
         let chunk_path = chunk_path_vc.await?;
         let chunk_public_path = if let Some(path) = output_root.get_path_to(&chunk_path) {
             path
@@ -108,7 +108,6 @@ impl EcmascriptDevEvaluateChunk {
                 move |entry| async move {
                     if let Some(placeable) =
                         ResolvedVc::try_sidecast::<Box<dyn EcmascriptChunkPlaceable>>(*entry)
-                            .await?
                     {
                         Ok(Some(
                             placeable
@@ -190,11 +189,9 @@ impl EcmascriptDevEvaluateChunk {
         }
 
         let code = code.build().cell();
-        if matches!(
-            this.chunking_context.await?.minify_type(),
-            MinifyType::Minify
-        ) {
-            return Ok(minify(chunk_path_vc, code, source_maps));
+
+        if let MinifyType::Minify { mangle } = this.chunking_context.await?.minify_type() {
+            return Ok(minify(chunk_path_vc, code, source_maps, mangle));
         }
 
         Ok(code)
@@ -217,8 +214,8 @@ fn modifier() -> Vc<RcStr> {
 #[turbo_tasks::value_impl]
 impl OutputAsset for EcmascriptDevEvaluateChunk {
     #[turbo_tasks::function]
-    async fn ident(&self) -> Result<Vc<AssetIdent>> {
-        let mut ident = self.ident.await?.clone_value();
+    async fn path(&self) -> Result<Vc<FileSystemPath>> {
+        let mut ident = self.ident.owned().await?;
 
         ident.add_modifier(modifier().to_resolved().await?);
 
@@ -235,15 +232,13 @@ impl OutputAsset for EcmascriptDevEvaluateChunk {
             self.other_chunks
                 .await?
                 .iter()
-                .map(|chunk| chunk.ident().to_string().to_resolved())
+                .map(|chunk| chunk.path().to_string().to_resolved())
                 .try_join()
                 .await?,
         );
 
         let ident = AssetIdent::new(Value::new(ident));
-        Ok(AssetIdent::from_path(
-            self.chunking_context.chunk_path(ident, ".js".into()),
-        ))
+        Ok(self.chunking_context.chunk_path(ident, ".js".into()))
     }
 
     #[turbo_tasks::function]
@@ -284,7 +279,7 @@ impl Asset for EcmascriptDevEvaluateChunk {
 #[turbo_tasks::value_impl]
 impl GenerateSourceMap for EcmascriptDevEvaluateChunk {
     #[turbo_tasks::function]
-    fn generate_source_map(self: Vc<Self>) -> Vc<OptionSourceMap> {
+    fn generate_source_map(self: Vc<Self>) -> Vc<OptionStringifiedSourceMap> {
         self.code().generate_source_map()
     }
 }

@@ -440,13 +440,6 @@ function assignDefaults(
     }
   }
 
-  // TODO(jiwon): remove once we've made new UI default
-  // Enable reactOwnerStack when newDevOverlay is enabled to have
-  // better call stack output in the new UI.
-  if (result.experimental?.newDevOverlay) {
-    result.experimental.reactOwnerStack = true
-  }
-
   warnCustomizedOption(
     result,
     'experimental.esmExternals',
@@ -926,6 +919,12 @@ function assignDefaults(
   if (!result.experimental) {
     result.experimental = {}
   }
+
+  // TODO(jiwon): remove once we've made new UI default
+  if (process.env.__NEXT_EXPERIMENTAL_NEW_DEV_OVERLAY === 'false') {
+    result.experimental.newDevOverlay = false
+  }
+
   result.experimental.optimizePackageImports = [
     ...new Set([
       ...userProvidedOptimizePackageImports,
@@ -1315,6 +1314,11 @@ export function getConfiguredExperimentalFeatures(
       userNextConfigExperimental
     ) as (keyof ExperimentalConfig)[]) {
       const value = userNextConfigExperimental[name]
+
+      if (name === 'turbo' && !process.env.TURBOPACK) {
+        // Ignore any Turbopack config if Turbopack is not enabled
+        continue
+      }
 
       if (
         name in defaultConfig.experimental &&

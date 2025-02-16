@@ -1,10 +1,8 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef, Suspense } from 'react'
 import type { DebugInfo } from '../../../types'
 import { Overlay } from '../components/overlay'
-import type { ReadyRuntimeError } from '../helpers/get-error-by-type'
 import { noop as css } from '../helpers/noop-template'
 import { RuntimeError } from './runtime-error'
-import type { VersionInfo } from '../../../../../../server/dev/parse-version-info'
 import { getErrorSource } from '../../../../../../shared/lib/error-source'
 import { HotlinkedText } from '../components/hot-linked-text'
 import { PseudoHtmlDiff } from './runtime-error/component-stack-pseudo-html'
@@ -18,14 +16,11 @@ import {
 } from '../../../../errors/console-error'
 import { extractNextErrorCode } from '../../../../../../lib/error-telemetry-utils'
 import { ErrorOverlayLayout } from '../components/errors/error-overlay-layout/error-overlay-layout'
-import type { SupportedErrorEvent } from './runtime-error/use-error-hook'
+import type { ReadyRuntimeError } from '../../../internal/helpers/get-error-by-type'
+import type { ErrorBaseProps } from '../components/errors/error-overlay/error-overlay'
 
-export type ErrorsProps = {
-  errors: SupportedErrorEvent[]
+export interface ErrorsProps extends ErrorBaseProps {
   readyErrors: ReadyRuntimeError[]
-  isTurbopack: boolean
-  versionInfo: VersionInfo
-  hasStaticIndicator: boolean
   debugInfo: DebugInfo
   onClose: () => void
 }
@@ -75,13 +70,13 @@ function ErrorDescription({
 }
 
 export function Errors({
-  errors,
   readyErrors,
   debugInfo,
-  versionInfo,
-  isTurbopack,
   onClose,
+  ...props
 }: ErrorsProps) {
+  const dialogResizerRef = useRef<HTMLDivElement | null>(null)
+
   useEffect(() => {
     // Close the error overlay when pressing escape
     function handleKeyDown(event: KeyboardEvent) {
@@ -95,8 +90,8 @@ export function Errors({
   }, [onClose])
 
   const isLoading = useMemo<boolean>(() => {
-    return readyErrors.length < 1 && Boolean(errors.length)
-  }, [errors.length, readyErrors.length])
+    return readyErrors.length < 1
+  }, [readyErrors.length])
 
   const [activeIdx, setActiveIndex] = useState<number>(0)
 
@@ -161,8 +156,8 @@ export function Errors({
       activeIdx={activeIdx}
       setActiveIndex={setActiveIndex}
       footerMessage={footerMessage}
-      versionInfo={versionInfo}
-      isTurbopack={isTurbopack}
+      dialogResizerRef={dialogResizerRef}
+      {...props}
     >
       <div className="error-overlay-notes-container">
         {notes ? (
@@ -191,13 +186,18 @@ export function Errors({
         <PseudoHtmlDiff
           className="nextjs__container_errors__component-stack"
           hydrationMismatchType={hydrationErrorType}
-          componentStackFrames={activeError.componentStackFrames || []}
           firstContent={serverContent}
           secondContent={clientContent}
-          reactOutputComponentDiff={errorDetails.reactOutputComponentDiff}
+          reactOutputComponentDiff={errorDetails.reactOutputComponentDiff || ''}
         />
       ) : null}
-      <RuntimeError key={activeError.id.toString()} error={activeError} />
+      <Suspense fallback={<div data-nextjs-error-suspended />}>
+        <RuntimeError
+          key={activeError.id.toString()}
+          error={activeError}
+          dialogResizerRef={dialogResizerRef}
+        />
+      </Suspense>
     </ErrorOverlayLayout>
   )
 }
@@ -207,14 +207,12 @@ export const styles = css`
     bottom: calc(var(--size-gap-double) * 4.5);
   }
   p.nextjs__container_errors__link {
-    color: var(--color-text-color-red-1);
-    font-weight: 600;
-    font-size: 15px;
+    font-size: 14px;
   }
   p.nextjs__container_errors__notes {
     color: var(--color-stack-notes);
-    font-weight: 600;
-    font-size: 15px;
+    font-size: 14px;
+    line-height: 1.5;
   }
   .nextjs-container-errors-body > h2:not(:first-child) {
     margin-top: calc(var(--size-gap-double) + var(--size-gap));
@@ -266,9 +264,12 @@ export const styles = css`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--size-3);
+    margin-bottom: var(--size-3_5);
   }
   .error-overlay-notes-container {
-    padding: 0 var(--size-4);
+    margin: var(--size-2) var(--size-0_5);
+  }
+  .error-overlay-notes-container p {
+    white-space: pre-wrap;
   }
 `

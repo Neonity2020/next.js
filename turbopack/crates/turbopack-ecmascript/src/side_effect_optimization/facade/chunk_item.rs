@@ -23,7 +23,7 @@ use crate::{
         EcmascriptChunkItem, EcmascriptChunkItemContent, EcmascriptChunkItemOptions,
         EcmascriptChunkPlaceable, EcmascriptChunkType, EcmascriptExports,
     },
-    code_gen::{CodeGenerateable, CodeGenerateableWithAsyncModuleInfo},
+    code_gen::CodeGenerateable,
     process_content_with_code_gens,
 };
 
@@ -63,39 +63,41 @@ impl EcmascriptChunkItem for EcmascriptModuleFacadeChunkItem {
             .get_async_module()
             .module_options(async_module_info);
 
-        let async_module = async_module_options.await?.clone_value();
+        let async_module = async_module_options.owned().await?;
 
         let mut code = RopeBuilder::default();
 
         let references = self.module.references();
         let references_ref = references.await?;
-        let mut code_gens = Vec::with_capacity(references_ref.len() + 2);
+        let mut code_gens_cells = Vec::with_capacity(references_ref.len() + 2);
         for r in &references_ref {
-            if let Some(code_gen) =
-                ResolvedVc::try_sidecast_sync::<Box<dyn CodeGenerateableWithAsyncModuleInfo>>(*r)
-            {
-                code_gens.push(code_gen.code_generation(
-                    *self.module_graph,
-                    *chunking_context,
-                    async_module_info,
-                ));
-            } else if let Some(code_gen) =
-                ResolvedVc::try_sidecast_sync::<Box<dyn CodeGenerateable>>(*r)
-            {
-                code_gens.push(code_gen.code_generation(*self.module_graph, *chunking_context));
+            if let Some(code_gen) = ResolvedVc::try_sidecast::<Box<dyn CodeGenerateable>>(*r) {
+                code_gens_cells
+                    .push(code_gen.code_generation(*self.module_graph, *chunking_context));
             }
         }
-        code_gens.push(
+        let additional_code_gens = [
             self.module
                 .async_module()
-                .code_generation(async_module_info, references),
-        );
-        code_gens.push(exports.code_generation(*self.module_graph, *chunking_context));
-        let code_gens = code_gens.into_iter().try_join().await?;
-        let code_gens = code_gens.iter().map(|cg| &**cg).collect::<Vec<_>>();
+                .code_generation(
+                    async_module_info,
+                    references,
+                    *self.module_graph,
+                    *chunking_context,
+                )
+                .await?,
+            exports
+                .code_generation(*self.module_graph, *chunking_context)
+                .await?,
+        ];
+        let code_gen_cells = code_gens_cells.into_iter().try_join().await?;
+        let code_gens = code_gen_cells
+            .iter()
+            .map(|cg| &**cg)
+            .chain(additional_code_gens.iter());
 
         let mut program = Program::Module(swc_core::ecma::ast::Module::dummy());
-        process_content_with_code_gens(&mut program, &Globals::new(), None, &code_gens);
+        process_content_with_code_gens(&mut program, &Globals::new(), None, code_gens);
 
         let mut bytes: Vec<u8> = vec![];
 
